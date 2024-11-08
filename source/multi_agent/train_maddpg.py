@@ -1,13 +1,15 @@
 import numpy as np
 import torch
-from search_hider_env import SearchHiderEnv
-from maddpg import MADDPGAgent, ReplayBuffer
+from source.multi_agent.search_hider_env import SearchHiderEnv
+from source.multi_agent.maddpg import MADDPGAgent, ReplayBuffer
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+
 
 def moving_average(data, window_size):
     """Compute the moving average of the data using the specified window size."""
     return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+
 
 def main():
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
@@ -177,6 +179,7 @@ def main():
     plt.close()
 
     env.close()
+
 
 if __name__ == '__main__':
     main()

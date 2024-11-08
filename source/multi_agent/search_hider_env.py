@@ -2,6 +2,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
+
 class SearchHiderEnv(gym.Env):
     """
     Custom Environment for the search mission.

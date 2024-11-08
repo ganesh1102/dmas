@@ -175,6 +175,10 @@ def main():
             total_confidence = 0
             steps = 0
 
+            # To store positions for visualization after each episode
+            searcher_positions = [state[:2]]
+            hider_position = state[2:]  # Hider remains static
+
             while not done and steps < max_steps_per_episode:
                 action = agent.select_action(state)
                 next_state, reward, done, _ = env.step(action)
@@ -190,6 +194,8 @@ def main():
                 total_entropy += entropy
                 total_confidence += confidence
                 steps += 1
+
+                searcher_positions.append(state[:2])  # Track searcher position
 
             episode_rewards.append(total_reward)
 
@@ -209,7 +215,29 @@ def main():
             })
             pbar.update(1)
 
-    # Plotting
+            # Plot the agent's behavior after each episode
+            if episode % 10 == 0:  # Plot every 10 episodes
+                plt.figure(figsize=(6, 6))
+                searcher_positions = np.array(searcher_positions)
+
+                # Plot hider's static position
+                plt.scatter(hider_position[0], hider_position[1], color='red', label='Hider Position', s=100)
+                # Plot searcher's path
+                plt.plot(searcher_positions[:, 0], searcher_positions[:, 1], '-o', color='blue', label='Searcher Path')
+                plt.scatter(searcher_positions[0, 0], searcher_positions[0, 1], color='green', label='Start Position', s=100)
+                plt.scatter(searcher_positions[-1, 0], searcher_positions[-1, 1], color='purple', label='End Position', s=100)
+
+                plt.title(f'Agent Behavior - Episode {episode}')
+                plt.xlabel('X Position')
+                plt.ylabel('Y Position')
+                plt.legend()
+                plt.xlim(0, 1)
+                plt.ylim(0, 1)
+                plt.grid(True)
+                plt.savefig(f'behavior_episode_{episode}.png')
+                plt.close()
+
+    # Plotting metrics
     fig, axs = plt.subplots(2, 2, figsize=(12, 8))
 
     axs[0, 0].plot(episode_rewards)
