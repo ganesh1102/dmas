@@ -1,4 +1,4 @@
-# Distributed Multi-Agent Systems (DMAS): 
+# Distributed Multi-Agent Systems (DMAS)
 
 ## Coordinated Multi-Agent Search in Partially Observable Environments Using Entropy-Driven Belief Maps
 
