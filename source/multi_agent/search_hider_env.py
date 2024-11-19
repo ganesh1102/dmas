@@ -84,7 +84,7 @@ class SearchHiderEnv(Env):
         '''
         Update belief map based on the observations at the current state.
         '''
-        # For simplicity, we skip belief map updates in this example
+        # Need to update
         pass
 
     def step(self, actions):
