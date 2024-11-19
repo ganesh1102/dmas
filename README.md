@@ -1,5 +1,6 @@
-# dmas
-Distributed multi-agent systems: Coordinated Multi-Agent Search in Partially Observable Environments Using Entropy-Driven Belief Maps
+# Distributed Multi-Agent Systems (DMAS): 
+
+## Coordinated Multi-Agent Search in Partially Observable Environments Using Entropy-Driven Belief Maps
 
 This repository contains code for a Multi-Agent Search Problem in a POMDP setting. All relevant code files, including those for a single-agent, can be found in the 'source' folder.
 
