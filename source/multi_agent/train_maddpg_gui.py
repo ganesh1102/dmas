@@ -38,7 +38,7 @@ def plot_positions(positions_s0, positions_s1, hider_positions, episode):
 
 def main():
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
-    env = SearchHiderEnv(grid_size=10) 
+    env = SearchHiderEnv(grid_size=10) # This was 50 before, code was taking too long to run
     num_agents = env.num_agents
     obs_dim = env.observation_space.shape[0] * env.observation_space.shape[1]  # 10 * 10 = 100
     action_dim = env.action_space.n
