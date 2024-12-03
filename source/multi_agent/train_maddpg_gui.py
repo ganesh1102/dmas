@@ -13,7 +13,7 @@ def maddpg_train():
     """Train agents using the MADDPG algorithm in the search and hider environment."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     max_episodes = 500
-    max_steps = 500  # Increased to allow agents more steps to find hiders
+    max_steps = 500 
     env = SearchHiderEnv(
         grid_size=10,
         num_agents=4,
@@ -21,19 +21,19 @@ def maddpg_train():
         visibility_radius=1.0,
         max_action=1.0,
         max_steps=max_steps,
-        central_square_size=4.0  # Define the size of the central square for hider initialization
+        central_square_size=4.0  # Define the size of a central square for hider initialization
     )
     num_agents = env.num_agents
     num_hiders = env.num_hiders
-    obs_dim = env.observation_space.shape[0]  # Observation dimension per agent
-    action_dim = env.action_space.shape[0]    # Action dimension per agent (e.g., 2 for x and y movement)
+    obs_dim = env.observation_space.shape[0]  # Observation dimension per agent (e.g., 2 for x and y position)
+    action_dim = env.action_space.shape[0]    # Action dimension per agent (e.g., 2 for x and y velocity)
     total_obs_dim = obs_dim * num_agents
     total_action_dim = action_dim * num_agents
 
     # Initialize agents with exploration noise parameters
     agents = []
     initial_noise = 1.0
-    final_noise = 0.1  # Minimum noise level
+    final_noise = 0.1  # min noise level
     for i in range(num_agents):
         agent = MADDPGAgent(
             index=i,
@@ -47,7 +47,7 @@ def maddpg_train():
         )
         agents.append(agent)
 
-    # Initialize replay buffer
+   
     replay_buffer = ReplayBuffer(capacity=int(1e6))
 
     batch_size = 1024
@@ -63,7 +63,7 @@ def maddpg_train():
     with tqdm(total=max_episodes, desc="Training Progress", unit="episode") as pbar:
         for episode in range(max_episodes):
             obs_n = env.reset()
-            cumulative_hiders_found = []  # To track cumulative hiders found at each step
+            cumulative_hiders_found = []  # track cumulative hiders found at each step
             agent_rewards = [0.0 for _ in agents]  # Track individual agent rewards
             hiders_found_episode = 0
             termination_step = max_steps  # Default termination step
@@ -100,7 +100,6 @@ def maddpg_train():
                 action_vec = np.concatenate(actions)
                 next_state = np.concatenate(next_obs_n)
 
-                # Store experience in replay buffer with per-agent rewards and dones
                 replay_buffer.push(state, action_vec, np.array(reward_n), next_state, np.array(dones))
 
                 # Update individual agent rewards
@@ -128,17 +127,17 @@ def maddpg_train():
 
             # After episode ends
             hiders_found_per_episode.append(cumulative_hiders_found)
-            # Save the belief map at the end of the episode
+            # Save the belief map 
             belief_maps.append(env.get_belief_map())
 
-            # Plot agent and hider trajectories for the episode, indicating termination step
+            # Plot agent and hider trajectories
             plot_positions(agent_positions, hider_positions, episode, env.grid_size, hider_found_steps)
 
-            # Update exploration noise for all agents based on performance
+            # Update exploration noise based on performance
             for idx, agent in enumerate(agents):
                 agent.update_noise_adaptive(agent_rewards[idx])
 
-            # Update progress bar
+            # progress bar
             pbar.set_postfix({
                 'Episode': episode + 1,
                 'Hiders Found': hiders_found_episode,
@@ -146,7 +145,7 @@ def maddpg_train():
             })
             pbar.update(1)
 
-    # After training, plot mean number of hiders found over steps
+    # plot mean number of hiders found over steps
     plot_mean_hiders_found(hiders_found_per_episode)
 
     # Plot the heatmap of final average uncertainty
@@ -170,12 +169,11 @@ def plot_positions(agent_positions, hider_positions, episode, grid_size, hider_f
     agent_colors = ['blue', 'green', 'red', 'purple', 'orange', 'cyan', 'magenta', 'yellow']
     hider_colors = ['black', 'gray', 'brown', 'olive']
 
-    # Plot agent trajectories
     for idx, positions in enumerate(agent_positions):
         positions = np.array(positions)
         plt.plot(positions[:, 0], positions[:, 1], color=agent_colors[idx % len(agent_colors)],
                  linewidth=1.0, label=f'Agent {idx}')
-        # Mark start and end positions
+      
         plt.scatter(positions[0, 0], positions[0, 1], color=agent_colors[idx % len(agent_colors)],
                     marker='o', s=50, label=f'Agent {idx} Start')
         plt.scatter(positions[-1, 0], positions[-1, 1], color=agent_colors[idx % len(agent_colors)],
@@ -199,7 +197,6 @@ def plot_positions(agent_positions, hider_positions, episode, grid_size, hider_f
     plt.xlim(0, grid_size)
     plt.ylim(0, grid_size)
 
-    # Construct title with hider found steps
     hider_info = []
     for idx, step in enumerate(hider_found_steps):
         if step is not None:
@@ -209,7 +206,7 @@ def plot_positions(agent_positions, hider_positions, episode, grid_size, hider_f
     hider_info_str = '; '.join(hider_info)
     plt.title(f'Episode {episode + 1}: ' + hider_info_str)
 
-    # To avoid duplicate labels in legend
+    # avoid duplicate labels in legend
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')  # Place legend outside the plot
@@ -261,7 +258,7 @@ def plot_average_uncertainty_heatmap(belief_maps, grid_size):
         belief_maps (list of np.ndarray): List containing belief maps for each episode.
         grid_size (int): Size of the grid.
     """
-    import matplotlib.colors as mcolors  # Import for custom colormap
+    import matplotlib.colors as mcolors 
 
     # Compute average belief over all episodes
     belief_maps_array = np.array(belief_maps)
@@ -273,10 +270,8 @@ def plot_average_uncertainty_heatmap(belief_maps, grid_size):
     per_cell_entropy = -p * np.log(p) - (1 - p) * np.log(1 - p)
     average_uncertainty = per_cell_entropy.reshape(grid_size, grid_size)
 
-    # Create custom colormap from dark red to yellow
     cmap = mcolors.LinearSegmentedColormap.from_list('custom_cmap', ['darkred', 'red', 'orange', 'yellow'])
 
-    # Plot the heatmap with the custom colormap
     plt.figure(figsize=(6, 5))
     plt.imshow(average_uncertainty, cmap=cmap, interpolation='nearest')
     plt.colorbar(label='Average Entropy')

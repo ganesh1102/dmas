@@ -48,7 +48,6 @@ class SearchHiderEnv(gym.Env):
         ]
         for i in range(min(self.num_agents, len(corners))):
             positions.append(corners[i].copy())
-        # If there are more agents than corners, initialize remaining agents randomly
         while len(positions) < self.num_agents:
             positions.append(self.random_position())
         return positions
@@ -79,7 +78,7 @@ class SearchHiderEnv(gym.Env):
                 else:
                     rel_pos = np.array([0.0, 0.0], dtype=np.float64)  # Hider is no longer considered
                 obs.extend(rel_pos)
-            obs.extend(agent_pos)  # Agent's own position
+            obs.extend(agent_pos)  
             observations.append(np.array(obs, dtype=np.float32))
         return observations
 
@@ -165,7 +164,7 @@ class SearchHiderEnv(gym.Env):
                     distance = np.linalg.norm(agent_pos - cell_center)
                     if distance <= self.visibility_radius:
                         # Reduce belief in this cell due to observation
-                        self.belief_map[x, y] *= 0.5  # You can adjust the reduction factor
+                        self.belief_map[x, y] *= 0.5 
 
         # Normalize the belief map
         total_belief = np.sum(self.belief_map)
