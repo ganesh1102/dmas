@@ -1,148 +1,291 @@
-# train_maddpg_gui.py
+# train_maddpg.py
+
 import numpy as np
 import torch
 from search_hider_env import SearchHiderEnv
-from maddpg import MADDPGAgent, ReplayBuffer
+from maddpg import MADDPGAgent
+from replay_buffer import ReplayBuffer
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import os
 
-def plot_positions(positions_s0, positions_s1, hider_positions, episode):
-    """Plot the positions of both agents and the hider."""
-    plt.figure(figsize=(6, 6))
-    if positions_s0:
-        plt.plot(*zip(*positions_s0), label="Searcher 0", marker="o", color="blue", linestyle="--")
-    if positions_s1:
-        plt.plot(*zip(*positions_s1), label="Searcher 1", marker="o", color="green", linestyle="--")
-    if hider_positions:
-        plt.plot(*zip(*hider_positions), label="Hider", marker="x", color="red", linestyle="-")
-
-    if positions_s0:
-        plt.scatter(*positions_s0[0], color="blue", marker="o", s=100, label="S0 Start")
-        plt.scatter(*positions_s0[-1], color="darkblue", marker="o", s=100, label="S0 End")
-    if positions_s1:
-        plt.scatter(*positions_s1[0], color="green", marker="o", s=100, label="S1 Start")
-        plt.scatter(*positions_s1[-1], color="darkgreen", marker="o", s=100, label="S1 End")
-    if hider_positions:
-        plt.scatter(*hider_positions[0], color="red", marker="x", s=100, label="Hider Start")
-        plt.scatter(*hider_positions[-1], color="darkred", marker="x", s=100, label="Hider End")
-
-    plt.xlim(-1, 11)
-    plt.ylim(-1, 11)
-    plt.xlabel("X Position")
-    plt.ylabel("Y Position")
-    plt.title(f"Agent and Hider Positions - Episode {episode}")
-    plt.legend(loc="best")
-    plt.grid(True)
-    plt.savefig(f'positions_episode_{episode}.png')
-    plt.close()
-
-def main():
-    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
-    env = SearchHiderEnv(grid_size=10)  # Changed grid_size to 10
+def maddpg_train():
+    """Train agents using the MADDPG algorithm in the search and hider environment."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    max_episodes = 500
+    max_steps = 500  # Increased to allow agents more steps to find hiders
+    env = SearchHiderEnv(
+        grid_size=10,
+        num_agents=4,
+        num_hiders=2,
+        visibility_radius=1.0,
+        max_action=1.0,
+        max_steps=max_steps,
+        central_square_size=4.0  # Define the size of the central square for hider initialization
+    )
     num_agents = env.num_agents
-    obs_dim = env.observation_space.shape[0] * env.observation_space.shape[1]  # 10 * 10 = 100
-    action_dim = env.action_space.n
+    num_hiders = env.num_hiders
+    obs_dim = env.observation_space.shape[0]  # Observation dimension per agent
+    action_dim = env.action_space.shape[0]    # Action dimension per agent (e.g., 2 for x and y movement)
     total_obs_dim = obs_dim * num_agents
     total_action_dim = action_dim * num_agents
+
+    # Initialize agents with exploration noise parameters
     agents = []
+    initial_noise = 1.0
+    final_noise = 0.1  # Minimum noise level
     for i in range(num_agents):
         agent = MADDPGAgent(
-            index=i, 
-            obs_dim=obs_dim, 
+            index=i,
+            obs_dim=obs_dim,
             action_dim=action_dim,
-            total_obs_dim=total_obs_dim, 
+            total_obs_dim=total_obs_dim,
             total_action_dim=total_action_dim,
-            device=device
+            device=device,
+            initial_noise=initial_noise,
+            final_noise=final_noise
         )
         agents.append(agent)
 
-    replay_buffer = ReplayBuffer(capacity=1e6)
-    max_episodes = 200
-    max_steps = 25
+    # Initialize replay buffer
+    replay_buffer = ReplayBuffer(capacity=int(1e6))
+
     batch_size = 1024
 
-    episode_rewards_history = []
-    distances_history = []
-    distances_s0 = []
-    distances_s1 = []
-    hider_found_history = []
+    hiders_found_per_episode = []  # To store cumulative hiders found per step per episode
+    belief_maps = []  # To store belief maps at the end of each episode
+
+    if not os.path.exists('plots'):
+        os.makedirs('plots')
 
     print('Starting training...')
 
     with tqdm(total=max_episodes, desc="Training Progress", unit="episode") as pbar:
         for episode in range(max_episodes):
-            obs_n = env.reset()  # List of flattened observations per agent
-            episode_rewards = np.zeros(num_agents)
-            episode_distances_s0 = []
-            episode_distances_s1 = []
-            hider_found = False
+            obs_n = env.reset()
+            cumulative_hiders_found = []  # To track cumulative hiders found at each step
+            agent_rewards = [0.0 for _ in agents]  # Track individual agent rewards
+            hiders_found_episode = 0
+            termination_step = max_steps  # Default termination step
 
-            # Track positions for plotting
-            positions_s0, positions_s1, hider_positions = [], [], []
+            # Initialize tracking for when each hider was found
+            hider_found_steps = [None for _ in range(num_hiders)]  # Initialize as None
+
+            # Initialize positions for plotting
+            agent_positions = [[] for _ in range(num_agents)]  # List to store positions per agent
+            hider_positions = [[] for _ in range(num_hiders)]  # List to store positions per hider
 
             for step in range(max_steps):
                 actions = []
                 for i, agent in enumerate(agents):
                     action = agent.act(obs_n[i], explore=True)
                     actions.append(action)
-                next_obs_n, reward_n, done, info_n = env.step(actions)
-                replay_buffer.push(obs_n, actions, reward_n, next_obs_n, [done]*num_agents)
-                episode_rewards += reward_n
+                next_obs_n, reward_n, dones, info_n = env.step(actions)
 
-                # Get positions for each searcher and the hider
-                pos_s0 = info_n[0]['searcher_position']
-                pos_s1 = info_n[1]['searcher_position']
-                hider_pos = info_n[0]['hider_position']
+                # Record agent and hider positions
+                for i in range(num_agents):
+                    agent_positions[i].append(env.agent_positions[i].copy())
+                for j in range(num_hiders):
+                    if not env.hiders_found[j]:
+                        hider_positions[j].append(env.hider_positions[j].copy())
+                    else:
+                        # If hider is found, append None to indicate removal
+                        hider_positions[j].append(None)
+                        # Record the step when the hider was found
+                        if hider_found_steps[j] is None:
+                            hider_found_steps[j] = step + 1  # +1 for 1-based indexing
 
-                # Track positions for plotting
-                positions_s0.append(pos_s0)
-                positions_s1.append(pos_s1)
-                hider_positions.append(hider_pos)
+                # Concatenate observations and actions for replay buffer
+                state = np.concatenate(obs_n)
+                action_vec = np.concatenate(actions)
+                next_state = np.concatenate(next_obs_n)
 
-                # Calculate distance
-                distance_s0 = np.linalg.norm(np.array(pos_s0) - np.array(hider_pos))
-                distance_s1 = np.linalg.norm(np.array(pos_s1) - np.array(hider_pos))
+                # Store experience in replay buffer with per-agent rewards and dones
+                replay_buffer.push(state, action_vec, np.array(reward_n), next_state, np.array(dones))
 
-                episode_distances_s0.append(distance_s0)
-                episode_distances_s1.append(distance_s1)
+                # Update individual agent rewards
+                agent_rewards = [ar + r for ar, r in zip(agent_rewards, reward_n)]
 
-                if info_n[0]['found_hider'] or info_n[1]['found_hider']:
-                    hider_found = True
+                # Record cumulative hiders found
+                hiders_found_episode = sum(env.hiders_found)
+                cumulative_hiders_found.append(hiders_found_episode)
 
-                obs_n = next_obs_n  # Update observations for next step
-                if done:
+                obs_n = next_obs_n
+
+                # Update agents
+                if len(replay_buffer) > batch_size:
+                    for agent in agents:
+                        agent.update(replay_buffer, batch_size, agents)
+
+                # Check if all hiders have been found
+                if all(env.hiders_found):
+                    termination_step = step + 1  # +1 to make it 1-based indexing
+                    break  # End episode early if all hiders are found
+
+                if any(dones):
+                    termination_step = step + 1
                     break
-                for agent in agents:
-                    agent.update(replay_buffer, batch_size, agents)
 
-            total_episode_reward = np.sum(episode_rewards)
-            episode_rewards_history.append(total_episode_reward)
+            # After episode ends
+            hiders_found_per_episode.append(cumulative_hiders_found)
+            # Save the belief map at the end of the episode
+            belief_maps.append(env.get_belief_map())
 
-            avg_distance_s0 = np.mean(episode_distances_s0) if episode_distances_s0 else 0
-            avg_distance_s1 = np.mean(episode_distances_s1) if episode_distances_s1 else 0
-            avg_distance = (avg_distance_s0 + avg_distance_s1) / 2
-            distances_history.append(avg_distance)
-            distances_s0.append(avg_distance_s0)
-            distances_s1.append(avg_distance_s1)
+            # Plot agent and hider trajectories for the episode, indicating termination step
+            plot_positions(agent_positions, hider_positions, episode, env.grid_size, hider_found_steps)
 
-            hider_found_history.append(1 if hider_found else 0)
+            # Update exploration noise for all agents based on performance
+            for idx, agent in enumerate(agents):
+                agent.update_noise_adaptive(agent_rewards[idx])
 
-            N = 10
-            average_reward = np.mean(episode_rewards_history[-N:]) if len(episode_rewards_history) >= N else np.mean(episode_rewards_history)
-
+            # Update progress bar
             pbar.set_postfix({
-                'Total Reward': f'{total_episode_reward:.2f}',
-                f'Avg Reward ({N})': f'{average_reward:.2f}',
-                'Hider Found': hider_found
+                'Episode': episode + 1,
+                'Hiders Found': hiders_found_episode,
+                'Avg Reward': np.mean(agent_rewards)
             })
             pbar.update(1)
 
-            # Plot positions after each episode
-            if episode % 10 == 0:
-                plot_positions(positions_s0, positions_s1, hider_positions, episode)
+    # After training, plot mean number of hiders found over steps
+    plot_mean_hiders_found(hiders_found_per_episode)
+
+    # Plot the heatmap of final average uncertainty
+    plot_average_uncertainty_heatmap(belief_maps, env.grid_size)
 
     print('Training complete and plots saved.')
     env.close()
 
+def plot_positions(agent_positions, hider_positions, episode, grid_size, hider_found_steps):
+    """
+    Plot the trajectories of agents and hiders for a given episode, indicating when each hider was found.
+
+    Args:
+        agent_positions (list of lists): Each sublist contains positions (x, y) of an agent over time.
+        hider_positions (list of lists): Each sublist contains positions (x, y) of a hider over time.
+        episode (int): The episode number.
+        grid_size (int): Size of the grid.
+        hider_found_steps (list of int or None): Step at which each hider was found.
+    """
+    plt.figure(figsize=(8, 8))
+    agent_colors = ['blue', 'green', 'red', 'purple', 'orange', 'cyan', 'magenta', 'yellow']
+    hider_colors = ['black', 'gray', 'brown', 'olive']
+
+    # Plot agent trajectories
+    for idx, positions in enumerate(agent_positions):
+        positions = np.array(positions)
+        plt.plot(positions[:, 0], positions[:, 1], color=agent_colors[idx % len(agent_colors)],
+                 linewidth=1.0, label=f'Agent {idx}')
+        # Mark start and end positions
+        plt.scatter(positions[0, 0], positions[0, 1], color=agent_colors[idx % len(agent_colors)],
+                    marker='o', s=50, label=f'Agent {idx} Start')
+        plt.scatter(positions[-1, 0], positions[-1, 1], color=agent_colors[idx % len(agent_colors)],
+                    marker='X', s=50, label=f'Agent {idx} End')
+
+    # Plot hider trajectories
+    for idx, positions in enumerate(hider_positions):
+        # Remove None entries indicating hiders that were found
+        valid_positions = [pos for pos in positions if pos is not None]
+        if not valid_positions:
+            continue  # Skip if hider was found in the first step
+        positions = np.array(valid_positions)
+        plt.plot(positions[:, 0], positions[:, 1], color=hider_colors[idx % len(hider_colors)],
+                 linestyle='--', linewidth=1.0, label=f'Hider {idx}')
+        # Mark start and end positions
+        plt.scatter(positions[0, 0], positions[0, 1], color=hider_colors[idx % len(hider_colors)],
+                    marker='s', s=50, label=f'Hider {idx} Start')
+        plt.scatter(positions[-1, 0], positions[-1, 1], color=hider_colors[idx % len(hider_colors)],
+                    marker='D', s=50, label=f'Hider {idx} End')
+
+    plt.xlim(0, grid_size)
+    plt.ylim(0, grid_size)
+
+    # Construct title with hider found steps
+    hider_info = []
+    for idx, step in enumerate(hider_found_steps):
+        if step is not None:
+            hider_info.append(f'Hider {idx} found at Step {step}')
+        else:
+            hider_info.append(f'Hider {idx} not found')
+    hider_info_str = '; '.join(hider_info)
+    plt.title(f'Episode {episode + 1}: ' + hider_info_str)
+
+    # To avoid duplicate labels in legend
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')  # Place legend outside the plot
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(f'plots/positions_episode_{episode + 1}.png')
+    plt.close()
+
+def plot_mean_hiders_found(hiders_found_per_episode):
+    """
+    Plot the mean number of hiders found over steps across all episodes.
+
+    Args:
+        hiders_found_per_episode (list of lists): Each sublist contains cumulative hiders found per step in an episode.
+    """
+
+    num_episodes = len(hiders_found_per_episode)
+    max_length = max(len(cumulative_hiders_found) for cumulative_hiders_found in hiders_found_per_episode)
+
+    # Create an array to store hiders found per step per episode
+    hiders_found_array = np.full((num_episodes, max_length), np.nan)
+
+    for i, cumulative_hiders_found in enumerate(hiders_found_per_episode):
+        length = len(cumulative_hiders_found)
+        hiders_found_array[i, :length] = cumulative_hiders_found
+
+    # Compute mean number of hiders found at each step over episodes
+    mean_hiders_found = np.nanmean(hiders_found_array, axis=0)
+
+    steps = np.arange(1, len(mean_hiders_found) + 1)
+
+    plt.figure()
+    plt.plot(steps, mean_hiders_found, marker='o')
+    plt.xlabel('Steps')
+    plt.ylabel('Mean Number of Hiders Found')
+    plt.title('Mean Number of Hiders Found vs Steps')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig('plots/mean_hiders_found_vs_steps.png')
+    plt.close()
+
+def plot_average_uncertainty_heatmap(belief_maps, grid_size):
+    """
+    Plot a heatmap of average uncertainty across cells over all episodes,
+    using a custom colormap where darker red indicates more confidence (lower uncertainty),
+    and yellow indicates less confidence (higher uncertainty).
+
+    Args:
+        belief_maps (list of np.ndarray): List containing belief maps for each episode.
+        grid_size (int): Size of the grid.
+    """
+    import matplotlib.colors as mcolors  # Import for custom colormap
+
+    # Compute average belief over all episodes
+    belief_maps_array = np.array(belief_maps)
+    average_belief = np.mean(belief_maps_array, axis=0)
+
+    # Compute per-cell entropy
+    p = average_belief.flatten()
+    p = np.clip(p, 1e-12, 1 - 1e-12)  # Avoid log(0)
+    per_cell_entropy = -p * np.log(p) - (1 - p) * np.log(1 - p)
+    average_uncertainty = per_cell_entropy.reshape(grid_size, grid_size)
+
+    # Create custom colormap from dark red to yellow
+    cmap = mcolors.LinearSegmentedColormap.from_list('custom_cmap', ['darkred', 'red', 'orange', 'yellow'])
+
+    # Plot the heatmap with the custom colormap
+    plt.figure(figsize=(6, 5))
+    plt.imshow(average_uncertainty, cmap=cmap, interpolation='nearest')
+    plt.colorbar(label='Average Entropy')
+    plt.title('Heatmap of Final Average Uncertainty')
+    plt.xlabel('Y Position')
+    plt.ylabel('X Position')
+    plt.tight_layout()
+    plt.savefig('plots/average_uncertainty_heatmap.png')
+    plt.close()
+
 if __name__ == '__main__':
-    main()
+    maddpg_train()
