@@ -29,6 +29,10 @@ class MADDPGAgent:
         self.noise = initial_noise
 
     def act(self, obs, explore=True):
+        """
+        Select an action for the agent given the observation.
+        If `explore` is True, adds Gaussian noise for exploration.
+        """
         obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         self.actor.eval()
         with torch.no_grad():
@@ -42,20 +46,21 @@ class MADDPGAgent:
 
     def update_noise_adaptive(self, reward):
         """
-        Update the exploration noise adaptively based on the agent's total reward.
-
-        Args:
-            reward (float): Total reward obtained by the agent in the episode.
+        Adjust noise level based on the agent's reward.
+        Increases noise for negative rewards and decreases for positive rewards.
         """
-        # Adjust noise based on reward
         if reward < 0:
-            # Increase noise to encourage exploration
             self.noise = min(self.noise + 0.05, self.initial_noise)
         else:
-            # Decrease noise to exploit learned policy
             self.noise = max(self.noise * 0.95, self.final_noise)
 
     def update(self, replay_buffer, batch_size, agents):
+        """
+        Update the actor and critic networks using sampled experiences from the replay buffer.
+        """
+        if len(replay_buffer) < batch_size:
+            return
+
         # Sample a batch of experiences
         states, actions, rewards, next_states, dones = replay_buffer.sample(batch_size)
         states = torch.FloatTensor(states).to(self.device)
@@ -64,17 +69,20 @@ class MADDPGAgent:
         next_states = torch.FloatTensor(next_states).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
 
-        # Critic update
+        # Target Q-value calculation
         target_actions = []
         for i, agent in enumerate(agents):
             target_action = agent.actor(next_states[:, i * agent.obs_dim : (i + 1) * agent.obs_dim])
             target_actions.append(target_action)
-        target_actions = torch.cat(target_actions, dim=1)
+        target_actions = torch.cat(target_actions, dim=1).to(self.device)
         target_q = rewards[:, self.index].unsqueeze(1) + \
                    0.95 * self.critic(next_states, target_actions) * (1 - dones[:, self.index].unsqueeze(1))
+
+        # Current Q-value
         current_q = self.critic(states, actions)
         critic_loss = nn.MSELoss()(current_q, target_q.detach())
 
+        # Update critic
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
@@ -87,14 +95,16 @@ class MADDPGAgent:
             else:
                 current_action = agent.actor(states[:, i * agent.obs_dim : (i + 1) * agent.obs_dim]).detach()
             current_actions.append(current_action)
-        current_actions = torch.cat(current_actions, dim=1)
+        current_actions = torch.cat(current_actions, dim=1).to(self.device)
         actor_loss = -self.critic(states, current_actions).mean()
 
+        # Update actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
 
         return actor_loss.item(), critic_loss.item()
+
 
 class ActorNetwork(nn.Module):
     def __init__(self, obs_dim, action_dim):
@@ -115,8 +125,9 @@ class ActorNetwork(nn.Module):
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        x = torch.tanh(self.fc3(x))  # Ensure actions are within [-1, 1]
+        x = torch.tanh(self.fc3(x))  # Actions in range [-1, 1]
         return x
+
 
 class CriticNetwork(nn.Module):
     def __init__(self, total_obs_dim, total_action_dim):
